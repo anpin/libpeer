@@ -3,14 +3,16 @@ cmake_minimum_required(VERSION 3.1)
 include(${CMAKE_CURRENT_LIST_DIR}/third_party/coreHTTP/httpFilePaths.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/third_party/coreMQTT/mqttFilePaths.cmake)
 
+
+
 if (DEFINED ENV{IDF_PATH})
   file(GLOB ESP32_CODES "./src/*.c")
   idf_component_register(
    SRCS ${ESP32_CODES} ${HTTP_SOURCES} ${MQTT_SOURCES} ${MQTT_SERIALIZER_SOURCES}
    INCLUDE_DIRS "./src" ${HTTP_INCLUDE_PUBLIC_DIRS} ${MQTT_INCLUDE_PUBLIC_DIRS}
-   REQUIRES mbedtls srtp json esp_netif
+   REQUIRES mbedtls srtp json esp_netif tcp_transport
   )
-  add_definitions("-DESP32 -DHTTP_DO_NOT_USE_CUSTOM_CONFIG -DMQTT_DO_NOT_USE_CUSTOM_CONFIG")
+  add_definitions("-DESP32 -DHTTP_DO_NOT_USE_CUSTOM_CONFIG")
   return()
 endif()
 
@@ -27,12 +29,13 @@ include(ExternalProject)
 
 include_directories(${CMAKE_BINARY_DIR}/dist/include ${CMAKE_BINARY_DIR}/dist/include/cjson)
 
-link_directories(${CMAKE_BINARY_DIR}/dist/lib)
+link_directories(${CMAKE_BINARY_DIR}/dist/lib ${CMAKE_BINARY_DIR}/dist/lib64)
 
 set(DEP_LIBS "srtp2" "usrsctp" "mbedtls" "mbedcrypto" "mbedx509" "cjson")
 # Extended debug information (symbols, source code, and macro definitions)
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g3")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3")
+set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/dist")
 
 function(enableSanitizer SANITIZER)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -fsanitize=${SANITIZER} -fno-omit-frame-pointer -fno-optimize-sibling-calls" PARENT_SCOPE)
@@ -57,7 +60,7 @@ if(UNDEFINED_BEHAVIOR_SANITIZER)
   enableSanitizer("undefined")
 endif()
 
-add_definitions("-Wunused-variable -Werror=sequence-point -Werror=pointer-sign -Werror=return-type -Werror=sizeof-pointer-memaccess -Wincompatible-pointer-types -DHTTP_DO_NOT_USE_CUSTOM_CONFIG -DMQTT_DO_NOT_USE_CUSTOM_CONFIG")
+add_definitions("-Wunused-variable -Werror=sequence-point -Werror=pointer-sign -Werror=return-type -Werror=sizeof-pointer-memaccess -Wincompatible-pointer-types -DHTTP_DO_NOT_USE_CUSTOM_CONFIG")
 
 add_subdirectory(src)
 add_subdirectory(examples)

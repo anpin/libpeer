@@ -218,7 +218,7 @@ void peer_connection_close(PeerConnection* pc) {
 
 int peer_connection_send_audio(PeerConnection* pc, const uint8_t* buf, size_t len) {
   if (pc->state != PEER_CONNECTION_COMPLETED) {
-    // LOGE("dtls_srtp not connected");
+    LOGE("dtls_srtp not connected");
     return -1;
   }
 

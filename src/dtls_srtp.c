@@ -10,6 +10,9 @@
 #include "mbedtls/ssl.h"
 #include "socket.h"
 #include "utils.h"
+#if ESP_PLATFORM
+#include <esp_crt_bundle.h>
+#endif
 
 int dtls_srtp_udp_send(void* ctx, const uint8_t* buf, size_t len) {
   DtlsSrtp* dtls_srtp = (DtlsSrtp*)ctx;
@@ -125,7 +128,7 @@ int dtls_srtp_init(DtlsSrtp* dtls_srtp, DtlsSrtpRole role, void* user_data) {
       MBEDTLS_TLS_SRTP_NULL_HMAC_SHA1_80,
       MBEDTLS_TLS_SRTP_NULL_HMAC_SHA1_32,
       MBEDTLS_TLS_SRTP_UNSET};
-
+  
   dtls_srtp->role = role;
   dtls_srtp->state = DTLS_SRTP_STATE_INIT;
   dtls_srtp->user_data = user_data;
@@ -133,6 +136,14 @@ int dtls_srtp_init(DtlsSrtp* dtls_srtp, DtlsSrtpRole role, void* user_data) {
   dtls_srtp->udp_recv = dtls_srtp_udp_recv;
 
   mbedtls_ssl_config_init(&dtls_srtp->conf);
+  int ret;
+#if ESP_PLATFORM
+    if ((ret = esp_crt_bundle_attach(&dtls_srtp->conf)) != 0 )
+    {
+        LOGE("ssl config error: failed to attach CRT bundle -0x%x", (unsigned int)-ret);
+        return -1;
+    }
+#endif
   mbedtls_ssl_init(&dtls_srtp->ssl);
 
   mbedtls_x509_crt_init(&dtls_srtp->cert);

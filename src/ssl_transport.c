@@ -12,7 +12,9 @@
 #include "ports.h"
 #include "ssl_transport.h"
 #include "utils.h"
-
+#if ESP_PLATFORM
+#include <esp_crt_bundle.h>
+#endif
 static int ssl_transport_mbedtls_recv(void* ctx, unsigned char* buf, size_t len) {
   return tcp_socket_recv((TcpSocket*)ctx, buf, len);
 }
@@ -20,6 +22,12 @@ static int ssl_transport_mbedtls_recv(void* ctx, unsigned char* buf, size_t len)
 static int ssl_transport_mbedlts_send(void* ctx, const uint8_t* buf, size_t len) {
   return tcp_socket_send((TcpSocket*)ctx, buf, len);
 }
+
+// Debug callback function
+void my_debug(void *ctx, int level, const char *file, int line, const char *str) {
+    LOGD("%s:%04d: %s", file, line, str)
+}
+
 
 int ssl_transport_connect(NetworkContext_t* net_ctx,
                           const char* host,
@@ -31,6 +39,13 @@ int ssl_transport_connect(NetworkContext_t* net_ctx,
 
   mbedtls_ssl_init(&net_ctx->ssl);
   mbedtls_ssl_config_init(&net_ctx->conf);
+#ifdef ESP_PLATFORM
+    if ((ret = esp_crt_bundle_attach(&net_ctx->conf)) != 0 )
+    {
+        LOGE("ssl config error: failed to attach CRT bundle -0x%x", (unsigned int)-ret);
+        return -1;
+    }
+#endif
   // mbedtls_x509_crt_init(&net_ctx->cacert);
   mbedtls_ctr_drbg_init(&net_ctx->ctr_drbg);
   mbedtls_entropy_init(&net_ctx->entropy);
@@ -47,6 +62,12 @@ int ssl_transport_connect(NetworkContext_t* net_ctx,
     LOGE("ssl config error: -0x%x", (unsigned int)-ret);
     return -1;
   }
+
+
+#ifdef CONFIG_MBEDTLS_DEBUG
+    mbedtls_debug_set_threshold(CONFIG_MBEDTLS_DEBUG_LEVEL);  // Set debug level
+    mbedtls_ssl_conf_dbg(&net_ctx->conf, my_debug, NULL);
+#endif
 
   mbedtls_ssl_conf_authmode(&net_ctx->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
   /*

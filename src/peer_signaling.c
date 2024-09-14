@@ -4,7 +4,6 @@
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
-
 #include <core_http_client.h>
 #include <core_mqtt.h>
 
@@ -331,19 +330,26 @@ static int peer_signaling_mqtt_connect(const char* hostname, int port) {
   if (strlen(g_ps.username) > 0) {
     conn_info.pUserName = g_ps.username;
     conn_info.userNameLength = strlen(g_ps.username);
+    LOGI("MQTT username=%s.", g_ps.username);
+
   }
 
   if (strlen(g_ps.password) > 0) {
     conn_info.pPassword = g_ps.password;
     conn_info.passwordLength = strlen(g_ps.password);
+    LOGI("MQTT password=%s.", g_ps.password);
+
   }
 
   if (strlen(g_ps.client_id) > 0) {
     conn_info.pClientIdentifier = g_ps.client_id;
     conn_info.clientIdentifierLength = strlen(g_ps.client_id);
+    LOGI("MQTT client_id=%s.", g_ps.client_id);
+
   }
 
   conn_info.keepAliveSeconds = KEEP_ALIVE_TIMEOUT_SECONDS;
+  LOGI("MQTT connecting...");
 
   status = MQTT_Connect(&g_ps.mqtt_ctx,
                         &conn_info, NULL, CONNACK_RECV_TIMEOUT_MS, &session_present);
