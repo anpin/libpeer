@@ -167,18 +167,22 @@ PeerConnection* peer_connection_create(PeerConfiguration* config) {
 
   memcpy(&pc->config, config, sizeof(PeerConfiguration));
 
-  pc->agent.mode = AGENT_MODE_CONTROLLED;
+  agent_create(&pc->agent);
 
   memset(&pc->sctp, 0, sizeof(pc->sctp));
 
   if (pc->config.datachannel) {
-    LOGI("Datachannel allocates heap size: %d", DATA_RB_DATA_LENGTH);
-    pc->data_rb = buffer_new(DATA_RB_DATA_LENGTH);
+#if (CONFIG_DATA_BUFFER_SIZE) > 0
+    LOGI("Datachannel allocates heap size: %d", CONFIG_DATA_BUFFER_SIZE);
+    pc->data_rb = buffer_new(CONFIG_DATA_BUFFER_SIZE);
+#endif
   }
 
   if (pc->config.audio_codec) {
-    LOGI("Audio allocates heap size: %d", AUDIO_RB_DATA_LENGTH);
-    pc->audio_rb = buffer_new(AUDIO_RB_DATA_LENGTH);
+#if (CONFIG_AUDIO_BUFFER_SIZE) > 0
+    LOGI("Audio allocates heap size: %d", CONFIG_AUDIO_BUFFER_SIZE);
+    pc->audio_rb = buffer_new(CONFIG_AUDIO_BUFFER_SIZE);
+#endif
 
     rtp_encoder_init(&pc->artp_encoder, pc->config.audio_codec,
                      peer_connection_outgoing_rtp_packet, (void*)pc);
@@ -188,9 +192,10 @@ PeerConnection* peer_connection_create(PeerConfiguration* config) {
   }
 
   if (pc->config.video_codec) {
-    LOGI("Video allocates heap size: %d", VIDEO_RB_DATA_LENGTH);
-    pc->video_rb = buffer_new(VIDEO_RB_DATA_LENGTH);
-
+#if (CONFIG_VIDEO_BUFFER_SIZE) > 0
+    LOGI("Video allocates heap size: %d", CONFIG_VIDEO_BUFFER_SIZE);
+    pc->video_rb = buffer_new(CONFIG_VIDEO_BUFFER_SIZE);
+#endif
     rtp_encoder_init(&pc->vrtp_encoder, pc->config.video_codec,
                      peer_connection_outgoing_rtp_packet, (void*)pc);
 
@@ -203,6 +208,7 @@ PeerConnection* peer_connection_create(PeerConfiguration* config) {
 
 void peer_connection_destroy(PeerConnection* pc) {
   if (pc) {
+    agent_destroy(&pc->agent);
     buffer_free(pc->data_rb);
     buffer_free(pc->audio_rb);
     buffer_free(pc->video_rb);
@@ -221,8 +227,11 @@ int peer_connection_send_audio(PeerConnection* pc, const uint8_t* buf, size_t le
     LOGE("dtls_srtp not connected");
     return -1;
   }
-
+#if (CONFIG_AUDIO_BUFFER_SIZE) > 0
   return buffer_push_tail(pc->audio_rb, buf, len);
+#else
+  return rtp_encoder_encode(&pc->artp_encoder, data, bytes);
+#endif
 }
 
 int peer_connection_send_video(PeerConnection* pc, const uint8_t* buf, size_t len) {
@@ -230,8 +239,11 @@ int peer_connection_send_video(PeerConnection* pc, const uint8_t* buf, size_t le
     // LOGE("dtls_srtp not connected");
     return -1;
   }
-
+#if (CONFIG_VIDEO_BUFFER_SIZE) > 0
   return buffer_push_tail(pc->video_rb, buf, len);
+#else
+  return rtp_encoder_encode(&pc->vrtp_encoder, data, bytes);
+#endif
 }
 
 int peer_connection_datachannel_send(PeerConnection* pc, char* message, size_t len) {
@@ -244,22 +256,24 @@ int peer_connection_datachannel_send_sid(PeerConnection* pc, char* message, size
     return -1;
   }
 
+#if (CONFIG_DATA_BUFFER_SIZE) > 0
+  return buffer_push_tail(pc->data_rb, (uint8_t*)message, len);
+#else
   if (pc->config.datachannel == DATA_CHANNEL_STRING)
     return sctp_outgoing_data(&pc->sctp, message, len, PPID_STRING, sid);
   else
     return sctp_outgoing_data(&pc->sctp, message, len, PPID_BINARY, sid);
+#endif
 }
 
 static char* peer_connection_dtls_role_setup_value(DtlsSrtpRole d) {
   return d == DTLS_SRTP_ROLE_SERVER ? "a=setup:passive" : "a=setup:active";
 }
 
-static void peer_connection_state_new(PeerConnection* pc, DtlsSrtpRole role) {
+static void peer_connection_state_new(PeerConnection* pc, DtlsSrtpRole role, int isOfferer) {
   char* description = (char*)pc->temp_buf;
 
   memset(pc->temp_buf, 0, sizeof(pc->temp_buf));
-
-  agent_deinit(&pc->agent);
 
   dtls_srtp_reset_session(&pc->dtls_srtp);
   dtls_srtp_init(&pc->dtls_srtp, role, pc);
@@ -268,9 +282,17 @@ static void peer_connection_state_new(PeerConnection* pc, DtlsSrtpRole role) {
 
   pc->sctp.connected = 0;
 
+  if (isOfferer) {
+    agent_clear_candidates(&pc->agent);
+    pc->agent.mode = AGENT_MODE_CONTROLLING;
+  } else {
+    pc->agent.mode = AGENT_MODE_CONTROLLED;
+  }
+
+  agent_gather_candidate(&pc->agent, NULL, NULL, NULL);  // host address
   for (int i = 0; i < sizeof(pc->config.ice_servers) / sizeof(pc->config.ice_servers[0]); ++i) {
     if (pc->config.ice_servers[i].urls) {
-      LOGI("ice_servers: %s", pc->config.ice_servers[i].urls);
+      LOGI("ice server: %s", pc->config.ice_servers[i].urls);
       agent_gather_candidate(&pc->agent, pc->config.ice_servers[i].urls, pc->config.ice_servers[i].username, pc->config.ice_servers[i].credential);
     }
   }
@@ -343,7 +365,7 @@ int peer_connection_loop(PeerConnection* pc) {
     case PEER_CONNECTION_NEW:
 
       if (!pc->b_local_description_created) {
-        peer_connection_state_new(pc, DTLS_SRTP_ROLE_SERVER);
+        peer_connection_state_new(pc, DTLS_SRTP_ROLE_SERVER, 1);
       }
       break;
 
@@ -371,18 +393,23 @@ int peer_connection_loop(PeerConnection* pc) {
       break;
     case PEER_CONNECTION_COMPLETED:
 
+#if (CONFIG_VIDEO_BUFFER_SIZE) > 0
       data = buffer_peak_head(pc->video_rb, &bytes);
       if (data) {
         rtp_encoder_encode(&pc->vrtp_encoder, data, bytes);
         buffer_pop_head(pc->video_rb);
       }
+#endif
 
+#if (CONFIG_AUDIO_BUFFER_SIZE) > 0
       data = buffer_peak_head(pc->audio_rb, &bytes);
       if (data) {
         rtp_encoder_encode(&pc->artp_encoder, data, bytes);
         buffer_pop_head(pc->audio_rb);
       }
+#endif
 
+#if (CONFIG_DATA_BUFFER_SIZE) > 0
       data = buffer_peak_head(pc->data_rb, &bytes);
       if (data) {
         if (pc->config.datachannel == DATA_CHANNEL_STRING)
@@ -391,6 +418,7 @@ int peer_connection_loop(PeerConnection* pc) {
           sctp_outgoing_data(&pc->sctp, (char*)data, bytes, PPID_BINARY, 0);
         buffer_pop_head(pc->data_rb);
       }
+#endif
 
       if ((pc->agent_ret = agent_recv(&pc->agent, pc->agent_buf, sizeof(pc->agent_buf))) > 0) {
         LOGD("agent_recv %d", pc->agent_ret);
@@ -451,6 +479,8 @@ void peer_connection_set_remote_description(PeerConnection* pc, const char* sdp_
   char* val_start = NULL;
   uint32_t* ssrc = NULL;
   DtlsSrtpRole role = DTLS_SRTP_ROLE_SERVER;
+  int is_update = 0;
+  Agent* agent = &pc->agent;
 
   while ((line = strstr(start, "\r\n"))) {
     line = strstr(start, "\r\n");
@@ -458,7 +488,6 @@ void peer_connection_set_remote_description(PeerConnection* pc, const char* sdp_
     buf[line - start] = '\0';
 
     if (strstr(buf, "a=setup:passive")) {
-      pc->agent.mode = AGENT_MODE_CONTROLLING;
       role = DTLS_SRTP_ROLE_CLIENT;
     }
 
@@ -466,9 +495,15 @@ void peer_connection_set_remote_description(PeerConnection* pc, const char* sdp_
       strncpy(pc->dtls_srtp.remote_fingerprint, buf + 22, DTLS_SRTP_FINGERPRINT_LENGTH);
     }
 
-    if (strstr(buf, "a=mid:video")) {
+    if (strstr(buf, "a=ice-ufrag") &&
+        strlen(agent->remote_ufrag) != 0 &&
+        (strncmp(buf + strlen("a=ice-ufrag:"), agent->remote_ufrag, strlen(agent->remote_ufrag)) == 0)) {
+      is_update = 1;
+    }
+
+    if (strstr(buf, "m=video")) {
       ssrc = &pc->remote_vssrc;
-    } else if (strstr(buf, "a=mid:audio")) {
+    } else if (strstr(buf, "m=audio")) {
       ssrc = &pc->remote_assrc;
     }
 
@@ -480,8 +515,12 @@ void peer_connection_set_remote_description(PeerConnection* pc, const char* sdp_
     start = line + 2;
   }
 
+  if (is_update) {
+    return;
+  }
+
   if (!pc->b_local_description_created) {
-    peer_connection_state_new(pc, role);
+    peer_connection_state_new(pc, role, 0);
   }
 
   agent_set_remote_description(&pc->agent, (char*)sdp_text);
@@ -553,4 +592,14 @@ char* peer_connection_lookup_sid_label(PeerConnection* pc, uint16_t sid) {
     }
   }
   return NULL;  // Not found
+}
+
+int peer_connection_add_ice_candidate(PeerConnection* pc, char* candidate) {
+  Agent* agent = &pc->agent;
+  if (ice_candidate_from_description(&agent->remote_candidates[agent->remote_candidates_count], candidate, candidate + strlen(candidate)) != 0) {
+    return -1;
+  }
+
+  agent->remote_candidates_count++;
+  return 0;
 }

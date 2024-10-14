@@ -15,8 +15,31 @@
 #if ESP_PLATFORM
 #include <esp_crt_bundle.h>
 #endif
-static int ssl_transport_mbedtls_recv(void* ctx, unsigned char* buf, size_t len) {
-  return tcp_socket_recv((TcpSocket*)ctx, buf, len);
+
+#define SSL_RECV_TIMEOUT 1000
+
+static int ssl_transport_mbedtls_recv_timeout(void* ctx, unsigned char* buf, size_t len, uint32_t timeout) {
+  int ret;
+  fd_set read_fds;
+  struct timeval tv;
+  tv.tv_sec = timeout / 1000;
+  tv.tv_usec = (timeout % 1000) * 1000;
+
+  FD_ZERO(&read_fds);
+  FD_SET(((TcpSocket*)ctx)->fd, &read_fds);
+
+  ret = select(((TcpSocket*)ctx)->fd + 1, &read_fds, NULL, NULL, &tv);
+  if (ret < 0) {
+    return -1;
+  } else if (ret == 0) {
+    // timeout
+  } else {
+    if (FD_ISSET(((TcpSocket*)ctx)->fd, &read_fds)) {
+      ret = tcp_socket_recv((TcpSocket*)ctx, buf, len);
+    }
+  }
+
+  return ret;
 }
 
 static int ssl_transport_mbedlts_send(void* ctx, const uint8_t* buf, size_t len) {
@@ -99,8 +122,9 @@ int ssl_transport_connect(NetworkContext_t* net_ctx,
     return -1;
   }
 
+  mbedtls_ssl_conf_read_timeout(&net_ctx->conf, SSL_RECV_TIMEOUT);
   mbedtls_ssl_set_bio(&net_ctx->ssl, &net_ctx->tcp_socket,
-                      ssl_transport_mbedlts_send, ssl_transport_mbedtls_recv, NULL);
+                      ssl_transport_mbedlts_send, NULL, ssl_transport_mbedtls_recv_timeout);
 
   LOGI("start to handshake");
 
@@ -111,7 +135,6 @@ int ssl_transport_connect(NetworkContext_t* net_ctx,
   }
 
   LOGI("handshake success");
-
   return 0;
 }
 
@@ -125,7 +148,7 @@ void ssl_transport_disconnect(NetworkContext_t* net_ctx) {
   tcp_socket_close(&net_ctx->tcp_socket);
 }
 
-int ssl_transport_recv(NetworkContext_t* net_ctx, void* buf, size_t len) {
+int32_t ssl_transport_recv(NetworkContext_t* net_ctx, void* buf, size_t len) {
   int ret;
   memset(buf, 0, len);
   ret = mbedtls_ssl_read(&net_ctx->ssl, buf, len);
@@ -133,12 +156,12 @@ int ssl_transport_recv(NetworkContext_t* net_ctx, void* buf, size_t len) {
   return ret;
 }
 
-int ssl_transport_send(NetworkContext_t* net_ctx, const void* buf, size_t len) {
+int32_t ssl_transport_send(NetworkContext_t* net_ctx, const void* buf, size_t len) {
   int ret;
 
   while ((ret = mbedtls_ssl_write(&net_ctx->ssl, buf, len)) <= 0) {
     if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-      LOGE("");
+      LOGE("ssl write error: -0x%x", (unsigned int)-ret);
     }
   }
 
