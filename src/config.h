@@ -12,6 +12,10 @@
 #define CONFIG_MBEDTLS_DEBUG 0
 #endif
 
+#ifndef CONFIG_MBEDTLS_DEBUG_LEVEL
+#define CONFIG_MBEDTLS_DEBUG_LEVEL 0
+#endif
+
 #ifndef CONFIG_MBEDTLS_2_X
 #define CONFIG_MBEDTLS_2_X 0
 #endif
